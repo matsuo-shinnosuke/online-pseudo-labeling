@@ -1,0 +1,28 @@
+defaults:
+  - dataset: cifar10
+
+result_path: /result/
+
+model: resnet18
+seed: 0
+lr: 0.0003
+batch_size: 512
+num_workers: 4
+device: 'cuda:0'
+num_epochs: 400
+is_pretrained: False
+validation: 0.2
+pseudo_ratio: 1.0
+is_soft: False
+n_training: 1
+
+val_metric: l1
+num_instances: 1024
+mini_batch: 4
+
+is_op: True
+fpl:
+  is_pertur: True
+  sigma: 1
+  eta: 5
+  loss_f: simple_confidence

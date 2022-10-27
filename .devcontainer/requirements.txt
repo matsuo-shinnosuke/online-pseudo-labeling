@@ -1,0 +1,12 @@
+numpy
+matplotlib 
+opencv-python 
+scikit-learn
+seaborn
+scipy
+natsort
+tqdm
+mip
+pulp
+Pillow
+autopep8
