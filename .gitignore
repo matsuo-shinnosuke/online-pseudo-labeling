@@ -1,9 +1,4 @@
 .vscode
-.devcontainer
-code
 data
-dataset
-docker
-multirun
-outputs
 result
+tmp

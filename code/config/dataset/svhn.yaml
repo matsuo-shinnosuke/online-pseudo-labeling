@@ -1,6 +1,0 @@
-name: svhn
-dir: /data/
-img_size: 32
-is_to_rgb: True
-img_ch: 3
-num_classes: 10

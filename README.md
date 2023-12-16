@@ -19,13 +19,23 @@ $ pip install -r requirements.txt
 ## Dataset
 You can create dataset by running following code. Dataset will be saved in `./data` directory.
 ```
-$ python src/make_dataset.py
+$ python src/make_dataset.py --dataset='cifar10' --num_classes=10 --num_instances=1024 --num_bags=100 --output_dir='result/'
 ```
 
 ## Training & Test
 ```
-$ python src/main.py
+$ python src/main.py --dataset='cifar10' --num_classes=10 --num_instances=1024 --num_bags=100 --output_dir='result/'
 ```
 
 ## Arguments
 You can set up any parameters at `arguments.py`
+
+## Citation
+If you find this repository helpful, please consider citing:
+```
+@inproceedings{icassp2023matsuo,
+  author={Matsuo, Shinnosuke and Bise, Ryoma and Uchida, Seiichi and Suehiro, Daiki},
+  booktitle={International Conference on Acoustics, Speech and Signal Processing (ICASSP)}, 
+  title={Learning From Label Proportion with Online Pseudo-Label Decision by Regret Minimization}, 
+  year={2023}}
+```

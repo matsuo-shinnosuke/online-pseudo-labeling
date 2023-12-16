@@ -22,7 +22,7 @@ def parse_option():
     parser.add_argument('--dataset_dir', default='data/', type=str)
     parser.add_argument('--dataset', default='cifar10', type=str)
     parser.add_argument('--val_size', default=0.2, type=float)
-    parser.add_argument('--output_dir', default='result/debug/', type=str)
+    parser.add_argument('--output_dir', default='result/', type=str)
 
     parser.add_argument('--num_classes', default=10, type=int)
     parser.add_argument('--num_instances', default=1024, type=int)
