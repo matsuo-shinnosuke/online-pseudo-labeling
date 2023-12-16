@@ -14,7 +14,7 @@ is_pretrained: False
 
 proportion_metric: ce
 mini_batch: 4
-num_instances: 2048
+num_instances: 64
 val_metric: l1
 
 consistency: none

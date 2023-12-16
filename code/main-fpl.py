@@ -17,9 +17,10 @@ from sklearn.metrics import confusion_matrix
 import torchvision.transforms as transforms
 from load_cifar10 import load_cifar10
 from load_svhn import load_svhn
+from loader import set_loader
 from utils import Dataset, fix_seed, make_folder, get_rampup_weight, cal_OP_PC_mIoU, save_confusion_matrix
 from losses import PiModelLoss, ProportionLoss, VATLoss
-from FPL import FPL_each_bag as FPL
+from online_pseudo_labeling import FPL_each_bag as FPL
 from PIL import Image
 
 log = logging.getLogger(__name__)
@@ -56,11 +57,11 @@ class DatasetBag(torch.utils.data.Dataset):
 
         return data, label, proportion
 
-
 class DatasetFPL(torch.utils.data.Dataset):
     def __init__(self, data, label, pseudo_label):
-        self.data = data
-        self.label = label
+        (n, b, c, w, h) = data.shape
+        self.data = data.reshape(b*n, c, w, h)
+        self.label = label.reshape(-1)
         self.pseudo_label = pseudo_label
         self.transform = transforms.Compose([
             transforms.ToTensor(),
@@ -77,6 +78,7 @@ class DatasetFPL(torch.utils.data.Dataset):
         pseudo_label = self.pseudo_label[idx]
         pseudo_label = torch.tensor(pseudo_label).long()
         return data, label, pseudo_label
+    
 
 
 def evaluation(model, loader, cfg):
@@ -139,39 +141,7 @@ def main(cfg: DictConfig) -> None:
     log.info(OmegaConf.to_yaml(cfg))
     log.info('cwd:%s' % cwd)
 
-    if cfg.dataset.name == 'cifar10':
-        train_data, train_label, test_data, test_label = load_cifar10(
-            dataset_dir=cwd + cfg.dataset.dir
-        )
-    if cfg.dataset.name == 'svhn':
-        train_data, train_label, test_data, test_label = load_svhn(
-            dataset_dir=cwd + cfg.dataset.dir
-        )
-
-    train_index = np.load(cwd + '/dataset/%s/bias-%d-train_index.npy' %
-                          (cfg.dataset.name, cfg.num_instances))
-    val_index = np.load(cwd + '/dataset/%s/bias-%d-val_index.npy' %
-                        (cfg.dataset.name, cfg.num_instances))
-
-    print(train_index.shape, val_index.shape)
-
-    # define loader
-    train_dataset = DatasetBag(
-        data=train_data, label=train_label, index=train_index)
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=1,
-        shuffle=False,  num_workers=cfg.num_workers)
-
-    val_dataset = DatasetBag(
-        data=train_data, label=train_label, index=val_index)
-    val_loader = torch.utils.data.DataLoader(
-        val_dataset, batch_size=cfg.mini_batch,
-        shuffle=False,  num_workers=cfg.num_workers)
-
-    test_dataset = Dataset(data=test_data, label=test_label)
-    test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=cfg.batch_size,
-        shuffle=False,  num_workers=cfg.num_workers)
+    train_data, train_label, train_loader, val_loader, test_loader = set_loader()
 
     #  FPL
     fpl = FPL(loader=train_loader, cfg=cfg)
@@ -212,46 +182,46 @@ def main(cfg: DictConfig) -> None:
             fpl.update_theta(model)
             fpl.update_d()
 
-            ##### analysis ######
-            label_list = train_label[train_index.reshape(-1)]
-            p_label_list = fpl.d.reshape(-1)
-            pseudo_label_acc = np.array(
-                np.array(label_list) == np.array(p_label_list)).mean()
-            pseudo_label_cm = confusion_matrix(
-                y_true=label_list, y_pred=p_label_list, normalize='true')
-            pseudo_label_acces.append(pseudo_label_acc)
+        #     ##### analysis ######
+        #     label_list = train_label[train_index.reshape(-1)]
+        #     p_label_list = fpl.d.reshape(-1)
+        #     pseudo_label_acc = np.array(
+        #         np.array(label_list) == np.array(p_label_list)).mean()
+        #     pseudo_label_cm = confusion_matrix(
+        #         y_true=label_list, y_pred=p_label_list, normalize='true')
+        #     pseudo_label_acces.append(pseudo_label_acc)
 
-            # calculate flip_pseudo_label_ratio
-            p_label = fpl.d.reshape(-1)
-            if epoch == 0:
-                flip_p_label_ratio = nan
-                flip_p_label_ratioes.append(flip_p_label_ratio)
-                temp_p_label = p_label.copy()
-            else:
-                flip_p_label_ratio = (p_label != temp_p_label).mean()
-                flip_p_label_ratioes.append(flip_p_label_ratio)
-                temp_p_label = p_label.copy()
+        #     # calculate flip_pseudo_label_ratio
+        #     p_label = fpl.d.reshape(-1)
+        #     if epoch == 0:
+        #         flip_p_label_ratio = nan
+        #         flip_p_label_ratioes.append(flip_p_label_ratio)
+        #         temp_p_label = p_label.copy()
+        #     else:
+        #         flip_p_label_ratio = (p_label != temp_p_label).mean()
+        #         flip_p_label_ratioes.append(flip_p_label_ratio)
+        #         temp_p_label = p_label.copy()
 
-            e_time = time.time()
-            log.info('[Epoch: %d/%d (%ds)] pseudo_label flip:  %.4f, acc: %.4f' %
-                     (epoch+1, cfg.num_epochs, e_time-s_time, flip_p_label_ratio, pseudo_label_acc))
-        else:
-            pseudo_label_acces.append(None)
-            flip_p_label_ratioes.append(None)
+        #     e_time = time.time()
+        #     log.info('[Epoch: %d/%d (%ds)] pseudo_label flip:  %.4f, acc: %.4f' %
+        #              (epoch+1, cfg.num_epochs, e_time-s_time, flip_p_label_ratio, pseudo_label_acc))
+        # else:
+        #     pseudo_label_acces.append(None)
+        #     flip_p_label_ratioes.append(None)
 
         ##### train ######
-        s_time = time.time()
-        if cfg.pseudo_ratio != 1:
-            used_train_index = []
-            for index in train_index:
-                if fpl.d[index[0]][index[1]] != -1:
-                    used_train_index.append(index)
-        else:
-            used_train_index = train_index
+        # s_time = time.time()
+        # if cfg.pseudo_ratio != 1:
+        #     used_train_index = []
+        #     for index in train_index:
+        #         if fpl.d[index[0]][index[1]] != -1:
+        #             used_train_index.append(index)
+        # else:
+        #     used_train_index = train_index
 
         train_fpl_dataset = DatasetFPL(
-            data=train_data[train_index.reshape(-1)],
-            label=train_label[train_index.reshape(-1)],
+            data=train_data,
+            label=train_label,
             pseudo_label=fpl.d.reshape(-1))
         train_fpl_loader = torch.utils.data.DataLoader(
             train_fpl_dataset, batch_size=cfg.batch_size,
@@ -329,69 +299,69 @@ def main(cfg: DictConfig) -> None:
                  (epoch+1, cfg.num_epochs, e_time-s_time, test_acc))
         log.info('====================================================')
 
-        if val_l1 < best_validation_loss:
-            torch.save(model.state_dict(), result_path + 'best_model.pth')
-            save_confusion_matrix(cm=pseudo_label_cm, path=result_path+'cm_pseudo_label.png',
-                                  title='epoch: %d, label acc: %.4f' % (epoch+1, pseudo_label_acc))
-            save_confusion_matrix(cm=train_pseudo_cm, path=result_path+'cm_train_pseudo.png',
-                                  title='epoch: %d, acc: %.4f' % (epoch+1, train_pseudo_acc))
+    #     if val_l1 < best_validation_loss:
+    #         torch.save(model.state_dict(), result_path + 'best_model.pth')
+    #         save_confusion_matrix(cm=pseudo_label_cm, path=result_path+'cm_pseudo_label.png',
+    #                               title='epoch: %d, label acc: %.4f' % (epoch+1, pseudo_label_acc))
+    #         save_confusion_matrix(cm=train_pseudo_cm, path=result_path+'cm_train_pseudo.png',
+    #                               title='epoch: %d, acc: %.4f' % (epoch+1, train_pseudo_acc))
 
-            save_confusion_matrix(cm=train_cm, path=result_path+'cm_train.png',
-                                  title='epoch: %d, train acc: %.4f' % (epoch+1, train_acc))
-            save_confusion_matrix(cm=val_cm, path=result_path+'cm_val.png',
-                                  title='epoch: %d, val l1: %.4f, acc: %.4f' % (epoch+1, val_l1, val_acc))
-            save_confusion_matrix(cm=test_cm, path=result_path+'cm_test.png',
-                                  title='epoch: %d, test acc: %.4f' % (epoch+1, test_acc))
+    #         save_confusion_matrix(cm=train_cm, path=result_path+'cm_train.png',
+    #                               title='epoch: %d, train acc: %.4f' % (epoch+1, train_acc))
+    #         save_confusion_matrix(cm=val_cm, path=result_path+'cm_val.png',
+    #                               title='epoch: %d, val l1: %.4f, acc: %.4f' % (epoch+1, val_l1, val_acc))
+    #         save_confusion_matrix(cm=test_cm, path=result_path+'cm_test.png',
+    #                               title='epoch: %d, test acc: %.4f' % (epoch+1, test_acc))
 
-            best_validation_loss = val_l1
-            final_acc = test_acc
+    #         best_validation_loss = val_l1
+    #         final_acc = test_acc
 
-        # if (epoch+1) % 10 == 0:
-        torch.save(model.state_dict(), result_path +
-                   'model/%d.pth' % (epoch+1))
-        with open(result_path+'theta/%d.pkl' % (epoch+1), "wb") as tf:
-            pickle.dump(fpl.theta, tf)
-        with open(result_path+'accum_loss/%d.pkl' % (epoch+1), "wb") as tf:
-            pickle.dump(fpl.total_loss, tf)
-        with open(result_path+'p_label/%d.pkl' % (epoch+1), "wb") as tf:
-            pickle.dump(fpl.d, tf)
+    #     # if (epoch+1) % 10 == 0:
+    #     torch.save(model.state_dict(), result_path +
+    #                'model/%d.pth' % (epoch+1))
+    #     with open(result_path+'theta/%d.pkl' % (epoch+1), "wb") as tf:
+    #         pickle.dump(fpl.theta, tf)
+    #     with open(result_path+'accum_loss/%d.pkl' % (epoch+1), "wb") as tf:
+    #         pickle.dump(fpl.total_loss, tf)
+    #     with open(result_path+'p_label/%d.pkl' % (epoch+1), "wb") as tf:
+    #         pickle.dump(fpl.d, tf)
 
-        np.save(result_path+'train_acc', train_acces)
-        np.save(result_path+'val_acc', val_acces)
-        np.save(result_path+'test_acc', test_acces)
-        plt.plot(train_acces, label='train_acc')
-        plt.plot(val_acces, label='val_acc')
-        plt.plot(test_acces, label='test_acc')
+    #     np.save(result_path+'train_acc', train_acces)
+    #     np.save(result_path+'val_acc', val_acces)
+    #     np.save(result_path+'test_acc', test_acces)
+    #     plt.plot(train_acces, label='train_acc')
+    #     plt.plot(val_acces, label='val_acc')
+    #     plt.plot(test_acces, label='test_acc')
 
-        np.save(result_path+'flip_pseudo_label_ratio', flip_p_label_ratioes)
-        np.save(result_path+'pseudo_label_mIoU', pseudo_label_acces)
-        mask = np.arange(0, epoch+1, cfg.n_training)
-        plt.plot(mask, np.array(flip_p_label_ratioes)[mask],
-                 label='flip_pseudo_label_ratio')
-        plt.plot(mask, np.array(pseudo_label_acces)
-                 [mask], label='pseudo_label_acc')
-        plt.legend()
-        plt.ylim(0, 1)
-        plt.xlabel('epoch')
-        plt.ylabel('acc')
-        plt.savefig(result_path+'curve_acc.png')
-        plt.close()
+    #     np.save(result_path+'flip_pseudo_label_ratio', flip_p_label_ratioes)
+    #     np.save(result_path+'pseudo_label_mIoU', pseudo_label_acces)
+    #     mask = np.arange(0, epoch+1, cfg.n_training)
+    #     plt.plot(mask, np.array(flip_p_label_ratioes)[mask],
+    #              label='flip_pseudo_label_ratio')
+    #     plt.plot(mask, np.array(pseudo_label_acces)
+    #              [mask], label='pseudo_label_acc')
+    #     plt.legend()
+    #     plt.ylim(0, 1)
+    #     plt.xlabel('epoch')
+    #     plt.ylabel('acc')
+    #     plt.savefig(result_path+'curve_acc.png')
+    #     plt.close()
 
-        np.save(result_path+'train_loss', train_losses)
-        np.save(result_path+'val_loss', val_losses)
-        np.save(result_path+'test_loss', test_losses)
-        plt.plot(train_losses, label='train_loss')
-        plt.plot(val_losses, label='val_loss')
-        plt.plot(test_losses, label='test_loss')
-        plt.legend()
-        plt.xlabel('epoch')
-        plt.ylabel('loss')
-        plt.savefig(result_path+'curve_loss.png')
-        plt.close()
+    #     np.save(result_path+'train_loss', train_losses)
+    #     np.save(result_path+'val_loss', val_losses)
+    #     np.save(result_path+'test_loss', test_losses)
+    #     plt.plot(train_losses, label='train_loss')
+    #     plt.plot(val_losses, label='val_loss')
+    #     plt.plot(test_losses, label='test_loss')
+    #     plt.legend()
+    #     plt.xlabel('epoch')
+    #     plt.ylabel('loss')
+    #     plt.savefig(result_path+'curve_loss.png')
+    #     plt.close()
 
-    log.info(OmegaConf.to_yaml(cfg))
-    log.info('acc: %.4f' % (final_acc))
-    log.info('--------------------------------------------------')
+    # log.info(OmegaConf.to_yaml(cfg))
+    # log.info('acc: %.4f' % (final_acc))
+    # log.info('--------------------------------------------------')
 
 
 if __name__ == '__main__':
