@@ -114,8 +114,7 @@ class OnlinePseudoLabeling():
         label_one_hot = np.identity(self.num_classes)[label]
         reward = np.zeros(label_one_hot.shape)
         reward[label_one_hot == 1] = (1-confidence)[label_one_hot == 1]
-        reward[label_one_hot == 0] = (
-            (1/self.num_classes) - confidence)[label_one_hot == 0]
+        reward[label_one_hot == 0] = (confidence.max(axis=1, keepdims=1) - confidence)[label_one_hot == 0]
         reward = reward.reshape(
             self.num_bags, self.num_instances, self.num_classes)
 
